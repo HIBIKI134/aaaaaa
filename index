@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Apple Pay 決済デモ</title>
+    <style>
+        /* Apple Pay公式のデザインガイドラインに沿ったボタンのスタイル */
+        .apple-pay-container {
+            text-align: center;
+            margin-top: 50px;
+            font-family: sans-serif;
+        }
+        .apple-pay-button {
+            display: none; /* 初期状態は非表示（対応ブラウザのみ表示） */
+            -webkit-appearance: -apple-pay-button;
+            -apple-pay-button-type: buy; 
+            -apple-pay-button-style: black; 
+            width: 250px;
+            height: 45px;
+            cursor: pointer;
+            border: none;
+            border-radius: 4px;
+        }
+    </style>
+</head>
+<body>
+
+    <div class="apple-pay-container">
+        <h2>商品を購入する</h2>
+        <p>価格: 1,000円 (税込)</p>
+        <!-- Apple Payボタン -->
+        <button id="apple-pay-btn" class="apple-pay-button"></button>
+    </div>
+
+    <script>
+        // 【設定完了】教えていただいたGASのウェブアプリURLをここに組み込みました
+        const GAS_WEBAPP_URL = 'https://google.com'; 
+
+        document.addEventListener("DOMContentLoaded", async () => {
+            const applePayButton = document.getElementById('apple-pay-btn');
+
+            // 1. 支払い情報の定義
+            const paymentMethods = [{
+                supportedMethods: 'https://apple.com',
+                data: {
+                    version: 3,
+                    merchantIdentifier: 'merchant.com.your-domain', // 本番時はAppleのマーチャントIDを入力
+                    countryCode: 'JP',
+                    supportedNetworks: ['visa', 'masterCard', 'amex', 'jcb'],
+                    merchantCapabilities: ['supports3DS']
+                }
+            }];
+
+            const paymentDetails = {
+                total: {
+                    label: 'テスト商品',
+                    amount: { currency: 'JPY', value: '1000' }
+                }
+            };
+
+            // 2. ブラウザがApple Payに対応しているかチェック
+            if (window.PaymentRequest) {
+                try {
+                    const request = new PaymentRequest(paymentMethods, paymentDetails);
+                    const canMakePayment = await request.canMakePayment();
+
+                    if (canMakePayment) {
+                        // 対応している場合のみボタンを表示
+                        applePayButton.style.display = 'inline-block';
+                        
+                        // 3. ボタンがクリックされた時の支払い処理
+                        applePayButton.addEventListener('click', async () => {
+                            try {
+                                const paymentResponse = new PaymentRequest(paymentMethods, paymentDetails);
+                                const response = await paymentResponse.show();
+                                
+                                // 取得したApple PayのトークンをGASに送信
+                                const gasResponse = await fetch(GAS_WEBAPP_URL, {
+                                    method: 'POST',
+                                    body: JSON.stringify({
+                                        token: response.details, 
+                                        amount: 1000,          
+                                        currency: 'jpy'          
+                                    })
+                                });
+
+                                const result = await gasResponse.json();
+
+                                if (result.status === 'success') {
+                                    await response.complete('success');
+                                    alert('決済が完了し、スプレッドシートに記録されました！');
+                                } else {
+                                    await response.complete('fail');
+                                    alert('決済エラー: ' + result.error);
+                                }
+
+                            } catch (error) {
+                                console.error('決済がキャンセルまたは失敗しました:', error);
+                            }
+                        });
+                    }
+                } catch (e) {
+                    console.error('PaymentRequestの初期化エラー:', e);
+                }
+            }
+        });
+    </script>
+</body>
+</html>
