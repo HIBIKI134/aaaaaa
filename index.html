@@ -3,19 +3,32 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Apple Pay 決済デモ</title>
+    <title>マルチ決済デモ (Apple Pay / Google Pay)</title>
     <style>
-        /* Apple Pay公式のデザインガイドラインに沿ったボタンのスタイル */
-        .apple-pay-container {
+        .pay-container {
             text-align: center;
             margin-top: 50px;
             font-family: sans-serif;
         }
+        /* Apple Pay公式のボタンスタイル */
         .apple-pay-button {
-            display: none; /* 初期状態は非表示（対応ブラウザのみ表示） */
+            display: none;
             -webkit-appearance: -apple-pay-button;
             -apple-pay-button-type: buy; 
             -apple-pay-button-style: black; 
+            width: 250px;
+            height: 45px;
+            cursor: pointer;
+            border: none;
+            border-radius: 4px;
+        }
+        /* Google Pay用のボタンスタイル */
+        .google-pay-button {
+            display: none;
+            background-color: #000;
+            color: #fff;
+            font-weight: bold;
+            font-size: 16px;
             width: 250px;
             height: 45px;
             cursor: pointer;
@@ -26,31 +39,63 @@
 </head>
 <body>
 
-    <div class="apple-pay-container">
+    <div class="pay-container">
         <h2>商品を購入する</h2>
         <p>価格: 1,000円 (税込)</p>
+        
         <!-- Apple Payボタン -->
         <button id="apple-pay-btn" class="apple-pay-button"></button>
+        
+        <!-- Google Payボタン -->
+        <button id="google-pay-btn" class="google-pay-button">Google Pay で購入</button>
     </div>
 
     <script>
-        // 【設定完了】教えていただいたGASのウェブアプリURLをここに組み込みました
+        // あなたのGASウェブアプリURLが組み込まれています
         const GAS_WEBAPP_URL = 'https://google.com'; 
 
         document.addEventListener("DOMContentLoaded", async () => {
             const applePayButton = document.getElementById('apple-pay-btn');
+            const googlePayButton = document.getElementById('google-pay-btn');
 
-            // 1. 支払い情報の定義
-            const paymentMethods = [{
-                supportedMethods: 'https://apple.com',
-                data: {
-                    version: 3,
-                    merchantIdentifier: 'merchant.com.your-domain', // 本番時はAppleのマーチャントIDを入力
-                    countryCode: 'JP',
-                    supportedNetworks: ['visa', 'masterCard', 'amex', 'jcb'],
-                    merchantCapabilities: ['supports3DS']
+            // 1. 各決済方法（メソッド）の定義
+            const paymentMethods = [
+                // 【Apple Payの定義】
+                {
+                    supportedMethods: 'https://apple.com',
+                    data: {
+                        version: 3,
+                        merchantIdentifier: 'merchant.com.your-domain',
+                        countryCode: 'JP',
+                        supportedNetworks: ['visa', 'masterCard', 'amex', 'jcb'],
+                        merchantCapabilities: ['supports3DS']
+                    }
+                },
+                // 【Google Payの定義を追加】
+                {
+                    supportedMethods: 'https://google.com/pay',
+                    data: {
+                        environment: 'TEST', // テスト環境（本番時は PRODUCTION）
+                        apiVersion: 2,
+                        apiVersionMinor: 0,
+                        allowedPaymentMethods: [{
+                            type: 'CARD',
+                            parameters: {
+                                allowedAuthMethods: ['PAN_ONLY', 'CRYPTOGRAM_3DS'],
+                                allowedCardNetworks: ['VISA', 'MASTERCARD', 'AMEX', 'JCB']
+                            },
+                            tokenizationSpecification: {
+                                type: 'PAYMENT_GATEWAY',
+                                parameters: {
+                                    'gateway': 'stripe', // 決済代行会社名
+                                    'stripe:version': '2020-08-27',
+                                    'stripe:publishableKey': 'pk_test_your_key_here' // あなたのStripe公開鍵
+                                }
+                            }
+                        }]
+                    }
                 }
-            }];
+            ];
 
             const paymentDetails = {
                 total: {
@@ -59,50 +104,61 @@
                 }
             };
 
-            // 2. ブラウザがApple Payに対応しているかチェック
+            // 2. ブラウザがPayment Requestに対応しているか
             if (window.PaymentRequest) {
                 try {
                     const request = new PaymentRequest(paymentMethods, paymentDetails);
+
+                    // 3. どちらの支払い方法が使えるか自動判別
                     const canMakePayment = await request.canMakePayment();
 
                     if (canMakePayment) {
-                        // 対応している場合のみボタンを表示
-                        applePayButton.style.display = 'inline-block';
-                        
-                        // 3. ボタンがクリックされた時の支払い処理
-                        applePayButton.addEventListener('click', async () => {
-                            try {
-                                const paymentResponse = new PaymentRequest(paymentMethods, paymentDetails);
-                                const response = await paymentResponse.show();
-                                
-                                // 取得したApple PayのトークンをGASに送信
-                                const gasResponse = await fetch(GAS_WEBAPP_URL, {
-                                    method: 'POST',
-                                    body: JSON.stringify({
-                                        token: response.details, 
-                                        amount: 1000,          
-                                        currency: 'jpy'          
-                                    })
-                                });
-
-                                const result = await gasResponse.json();
-
-                                if (result.status === 'success') {
-                                    await response.complete('success');
-                                    alert('決済が完了し、スプレッドシートに記録されました！');
-                                } else {
-                                    await response.complete('fail');
-                                    alert('決済エラー: ' + result.error);
-                                }
-
-                            } catch (error) {
-                                console.error('決済がキャンセルまたは失敗しました:', error);
-                            }
-                        });
+                        // 【iOS/Safariの場合】Apple Payを表示
+                        if (request.id === '' || navigator.userAgent.includes('Safari') && !navigator.userAgent.includes('Chrome')) {
+                            applePayButton.style.display = 'inline-block';
+                            setupButtonListener(applePayButton);
+                        } else {
+                            // 【Chromebook/Android/Chromeの場合】Google Payを表示
+                            googlePayButton.style.display = 'inline-block';
+                            setupButtonListener(googlePayButton);
+                        }
                     }
                 } catch (e) {
-                    console.error('PaymentRequestの初期化エラー:', e);
+                    console.error('初期化エラー:', e);
                 }
+            }
+
+            // 4. ボタンがクリックされた時の共通処理（GASへのデータ送信）
+            function setupButtonListener(buttonElement) {
+                buttonElement.addEventListener('click', async () => {
+                    try {
+                        const paymentResponse = new PaymentRequest(paymentMethods, paymentDetails);
+                        const response = await paymentResponse.show();
+                        
+                        // 取得した決済トークン（GoogleかApple）をGASに送信
+                        const gasResponse = await fetch(GAS_WEBAPP_URL, {
+                            method: 'POST',
+                            body: JSON.stringify({
+                                token: response.details, 
+                                amount: 1000,          
+                                currency: 'jpy'          
+                            })
+                        });
+
+                        const result = await gasResponse.json();
+
+                        if (result.status === 'success') {
+                            await response.complete('success');
+                            alert('決済が完了し、スプレッドシートに記録されました！');
+                        } else {
+                            await response.complete('fail');
+                            alert('決済エラー: ' + result.error);
+                        }
+
+                    } catch (error) {
+                        console.error('決済がキャンセルまたは失敗しました:', error);
+                    }
+                });
             }
         });
     </script>
